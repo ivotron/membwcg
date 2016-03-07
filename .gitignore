@@ -30,3 +30,16 @@
 
 # Debug files
 *.dSYM/
+
+*.sw?
+/Module.symvers
+/built-in.o
+/membwcontrol.ko
+/membwcontrol.mod.c
+/membwcontrol.mod.o
+/membwcontrol.o
+/.membwcontrol.o.d
+/.membwcontrol.o.tmp
+/modules.order
+/.tmp_versions
+/.*.cmd
