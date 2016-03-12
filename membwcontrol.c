@@ -9,54 +9,137 @@
  * Module Types
  **************************************************************************/
 
-/* per-task accounting */
-struct task_stats {
-        int id;
+struct cgroup_stats {
         int quota;
         int used;
+        struct perf_event __percpu **counters;
 };
 
-/* global info */
-struct membw_stats {
-        char arch[3];
-        int period;
-        struct task_stats task[128];
-        struct perf_event counter[128];
+struct perf_event_attr hw_attr = {
+        .type           = PERF_TYPE_HARDWARE,
+        .config         = PERF_COUNT_HW_CACHE_MISSES,
+        .size           = sizeof(struct perf_event_attr),
+        .pinned         = 1,
+        .disabled       = 1,
+        .exclude_kernel = 1,
+        .pinned         = 1,
+        .sample_period  = 0,
 };
 
 /*************************************************************************
- Global Variables
-************************************************************************/
+ * Global Variables
+ ************************************************************************/
 
 // parameters
-static char *hw_arch = "";
 static int period_us = 1000;
 
 // global stats
-static struct membw_stats stats;
-
-// debugfs entry
-static struct dentry *membwcg_dir;
+struct cgroup_stats stats[128];
 
 /*************************************************************************
- Module parameters
-************************************************************************/
-
-module_param(hw_arch, charp,  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(hw_arch, "hardware type");
+ * Module parameters
+ ************************************************************************/
 
 module_param(period_us, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(period_us, "period in microseconds");
 
+/**************************************************************************
+ * main code
+ **************************************************************************/
+
+/*
+ * overflow callback
+ */
+static void oflow(struct perf_event *event,
+                  struct perf_sample_data *data, struct pt_regs *regs)
+{
+    /*
+    int id;
+    u32 cpu = smp_processor_id();
+
+    for (id = 0; id < num_counters; ++id)
+        if (per_cpu(perf_events, cpu)[id] == event)
+            break;
+
+    if (id != num_counters)
+        oprofile_add_sample(regs, id);
+    else
+        pr_warning("oprofile: ignoring spurious overflow "
+                "on cpu %u\n", cpu);
+    */
+    return;
+}
+
+static int create_counter(struct cgroup_stats *stat)
+{
+        int cpu, ret = 0;
+        struct perf_event *e;
+
+        for_each_online_cpu(cpu) {
+                e = perf_event_create_kernel_counter(
+                        &hw_attr, cpu, NULL, &oflow, NULL);
+
+                // then create a perf_cgroup
+                //
+                //
+                // then attach it to the cgroup
+                //
+                //    perf_cgroup_from_task(e->hw.target)
+        }
+
+
+        if (!e)
+                return -1;
+
+        return ret;
+}
+
+// static void remove_counter(void *info)
+// {
+// }
 
 /*************************************************************************
  * debugfs
  ************************************************************************/
 
+// debugfs entry
+static struct dentry *membwcg_dir;
+
+static struct cgroup_stats *stats_for_cgroup(char* cgroup_name)
+{
+    return NULL;
+}
+
+static struct cgroup_stats *init_stat(char* cgroup_name)
+{
+    // kmalloc()
+    return NULL;
+}
+
 static ssize_t membw_quotas_write(struct file *filp,
                                   const char __user *ubuf,
                                   size_t cnt, loff_t *ppos)
 {
+        // 0. parse cgroup name and quota
+        char cgroup_name[10] = "name";
+        int quota = 0;
+
+        // 1. check if cgroup hierarchy exists
+        // TODO: we won't check for overlaps with others
+        //       but this should definitely be done
+
+        // 2. check if we have stats for the group
+
+        struct cgroup_stats *stat = stats_for_cgroup(cgroup_name);
+
+        if (stat) {
+            // we've seen it before, so let's just reassign the quota
+            stat->quota = quota;
+        } else {
+            stat = init_stat(cgroup_name);
+            create_counter(stat);
+        }
+
         return cnt;
 }
 
@@ -86,31 +169,12 @@ static int membwcg_init_debugfs(void)
         return 0;
 }
 
-/**************************************************************************
- * main code
- **************************************************************************/
-
-// static void unload_counter(void *info)
-// {
-//         struct core_info *cinfo = this_cpu_ptr(core_info);
-//         BUG_ON(!cinfo->event);
-//
-//         /* stop the counter */
-//         cinfo->event->pmu->stop(cinfo->event, PERF_EF_UPDATE);
-//         cinfo->event->pmu->del(cinfo->event, 0);
-//
-//         pr_info("LLC bandwidth throttling disabled\n");
-// }
-
 /*************************************************************************
  * init/exit
  ************************************************************************/
 
 static int __init _init_module(void) {
-        stats.period = period_us;
-
-        // TODO: check that hw_arch is only 3 chars
-        strncpy(stats.arch, hw_arch, 3);
+        hw_attr.sample_period = period_us;
 
         membwcg_init_debugfs();
 
@@ -119,7 +183,7 @@ static int __init _init_module(void) {
 
 static void __exit _exit_module(void) {
         debugfs_remove_recursive(membwcg_dir);
-        //unload_counter();
+        //remove_counter();
 }
 
 
