@@ -43,3 +43,6 @@
 /modules.order
 /.tmp_versions
 /.*.cmd
+/.vagrant
+*.pyc
+.ropeproject
