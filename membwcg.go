@@ -2,121 +2,159 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-
-	"gopkg.in/fsnotify.v1"
 )
 
+// flags
 var quota = flag.Int("quota",
 	500, "quota (number of ops)")
-
-var schedulingPeriod = flag.Int("scheduling-period",
-	1000, "number of samples that conform a throttle period")
-
-var samplingPeriod = flag.Int("sample-period",
+var schedulingPeriod = flag.Int("period",
+	1000, "number of milliseconds per period, as a multiple of sample-period")
+var samplingPeriod = flag.Int("sampling-period",
 	100, "value for perf's -I")
-
-var cidfile = flag.String("cidfile",
-	"/tmp/watch", "path to file that docker writes (--cidfile flag)")
-
+var cid = flag.String("cid",
+	"000", "container id to control")
 var ops = flag.String("ops",
 	"LLC-prefetches,cache-misses", "value for perf's -e")
+var verbose = flag.Bool("verbose", false, "whether to print perf output")
 
-var cid string
+// internal variables
 var used = 0
 var frozen = false
-var currentSampleIteration = 0
+var currentIteration = 0
+var linesPerPeriod = 0
+var cgfile = ""
+var logBuf bytes.Buffer
+var logCnt = 0
 
-func createPerfCounter() (r *bufio.Reader) {
+func updateStatsAndLimit(line string) {
+	if *verbose {
+		logBuf.WriteString(line + "\n")
+	}
+	currentIteration++
+	logCnt++
+
+	if *verbose && logCnt == 50 {
+		fmt.Println(logBuf.String())
+		logCnt = 0
+	}
+	if currentIteration == linesPerPeriod {
+		used = 0
+		currentIteration = 0
+		if frozen {
+			if err := ioutil.WriteFile(cgfile, []byte("THAWED"), 0644); err != nil {
+				if os.IsNotExist(err) {
+					// if file is gone, container was removed, so we're done
+					os.Exit(0)
+				}
+				log.Fatalln(err)
+			}
+			frozen = false
+		}
+
+		// no need to update stats since we've just reset counters
+		return
+	}
+
+	cols := strings.Split(line, ",")
+	if len(cols) != 5 {
+		return
+	}
+	i, err := strconv.Atoi(cols[1])
+	if err != nil {
+		if strings.Contains(cols[1], "<") {
+			return
+		}
+		log.Fatalln(err)
+	}
+	used += i
+	if *verbose {
+		logBuf.WriteString(fmt.Sprintf("used: %d\n", used))
+	}
+
+	if used > *quota {
+		if *verbose {
+			logBuf.WriteString("process went above its threshold\n")
+		}
+
+		if err := ioutil.WriteFile(cgfile, []byte("FROZEN"), 0644); err != nil {
+			if os.IsNotExist(err) {
+				// if file is gone, container was removed, so we're done
+				os.Exit(0)
+			}
+			log.Fatalln(err)
+		}
+		frozen = true
+	}
+}
+
+func preparePerfCounter() (cmd *exec.Cmd) {
 	if math.Mod(float64(*schedulingPeriod), float64(*samplingPeriod)) != 0.0 {
-		log.Fatalln("ERROR: scheduling period must be a multiple of sampling period")
+		log.Fatalln(
+			fmt.Sprintf(
+				"ERROR: scheduling period (%d) must be a multiple of sampling period (%d)",
+				*schedulingPeriod,
+				*samplingPeriod))
 	}
 
 	groups := []string{}
-	for _, _ = range *ops {
-		groups = append(groups, "docker/"+cid)
+	for _, _ = range strings.Split(*ops, ",") {
+		groups = append(groups, *cid)
 	}
 
-	cmd := exec.Command("perf", "stat",
+	cgfile = "/sys/fs/cgroup/freezer/" + *cid + "/freezer.state"
+	numOps := len(strings.Split(*ops, ","))
+	linesPerPeriod = int(*schedulingPeriod / *samplingPeriod) * numOps
+
+	// for every sample, there are as many lines as number of operations being
+	// counted. So every sample is N lines in the output of perf, where N is the
+	// number of ops.
+
+	cmd = exec.Command("perf", "stat",
 		"-a",
 		"-x,",
 		"-I", strconv.Itoa(*samplingPeriod),
 		"-e", *ops,
 		"-G", strings.Join(groups, ","))
 
-	stderr, err := cmd.StderrPipe()
-
-	if err != nil {
-		log.Fatalln(err)
+	if *verbose {
+		logBuf.WriteString(strings.Join(cmd.Args, " ") + "\n")
 	}
-
-	cmd.Start()
-	r = bufio.NewReader(stderr)
 
 	return
 }
 
-func monitorAndLimit(reader *bufio.Reader) {
-	cgfile := "/sys/fs/cgroup/freezer/docker/" + cid + "/freezer.state"
-	samplesPerSchedulingPeriod := int(*schedulingPeriod / *samplingPeriod)
-
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		currentSampleIteration++
-
-		if frozen {
-			if currentSampleIteration == samplesPerSchedulingPeriod {
-				if err = ioutil.WriteFile(cgfile, []byte("THAWED"), 0644); err != nil {
-					log.Fatalln(err)
-				}
-				used = 0
-				frozen = false
-				currentSampleIteration = 0
-			}
-
-			// no need to update stats:
-			// - we've just thawed the cgroup or
-			// - we know we went over the limit
-			continue
-		}
-
-		for _, _ = range *ops {
-			l := strings.Split(string(line), ",")
-			i, err := strconv.Atoi(l[1])
-			if err != nil {
-				if strings.Contains(l[1], "<") {
-					continue
-				}
-				log.Fatalln(err)
-			}
-			used += i
-		}
-
-		if used > *quota {
-			if err = ioutil.WriteFile(cgfile, []byte("FREEZE"), 0644); err != nil {
-				log.Fatalln(err)
-			}
-			frozen = true
-		}
-
-		currentSampleIteration++
-	}
-}
-
 func controlBandwidth() {
-	r := createPerfCounter()
+	cmd := preparePerfCounter()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Fatalln(err)
+	}
 
-	monitorAndLimit(r)
+	scanner := bufio.NewScanner(stderr)
+	go func() {
+		for scanner.Scan() {
+			updateStatsAndLimit(scanner.Text())
+		}
+	}()
+
+	if err := cmd.Start(); err != nil {
+		log.Fatalln(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		log.Fatalln(fmt.Sprintf("ERROR: while executing perf (%s)", err))
+	}
+
+	return
 }
 
 func init() {
@@ -124,37 +162,6 @@ func init() {
 }
 
 func main() {
-
 	flag.Parse()
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case event := <-watcher.Events:
-				if event.Op&fsnotify.Write == fsnotify.Write {
-					buf, err := ioutil.ReadFile(*cidfile)
-					if err != nil {
-						log.Fatalln(err)
-					}
-					cid = string(buf)
-					controlBandwidth()
-				}
-			case err := <-watcher.Errors:
-				log.Fatalln("error:", err)
-			}
-		}
-	}()
-
-	err = watcher.Add(*cidfile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	<-done
-
+	controlBandwidth()
 }

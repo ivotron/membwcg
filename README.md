@@ -1,30 +1,30 @@
-# membwcontrol
+# membwcg
 
-Memory bandwidth control
+Simulates, in user space, a cgroup subsystem for managing memory 
+bandwidth.
 
 Flow:
 
-  * when membwcg runs, it watches a file being created whose content 
-    is the id of the container (see `--cidfile`).
-  * when it gets a notification that the file it's been created, it 
-    reads the container ID and starts a perf counter using `perf` to 
-    watch the container's memory usage
-  * when a container goes above its memory threshold, it is frozen 
-    until the next period.
+ 1. Creates performance counter using `perf` to watch a container's 
+    memory bandwidth usage.
+ 2. When a container goes above its memory quota, it is frozen until 
+    the next period.
 
 ## Usage
 
 ```bash
-membwcg -cidfile $file -quota $ops -period $ms
+docker-run $period $quota $timeout --rm -e VAR=3 img ...
 ```
 
-File is the file in which docker writes the container ID. Period is 
-given in milliseconds and quota in the number of memory operations per 
-period. Thus, to get a container's memory bandwidth managed:
+Option `period` is given in milliseconds (in multiples of 100) and 
+`quota` in the number of memory operations per period. For example
 
 ```bash
-docker run --cidfile /tmp/cidfile ...
+docker-run 1000 500 $timeout --rm -e VAR=3 img ...
 ```
+
+The memory operations that are tracked are `LLC-prefetches` and 
+`cache-misses`.
 
 ## Requirements
 

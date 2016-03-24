@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# Wrapper for `docker run` with 3 new mandatory positional arguments:
+#
+#   docker-run $period $quota $timeout <other-regular-docker-run-args>
+#
+
+# remove from previous run
+watchfile="/tmp/membwcg_`cat /dev/urandom | tr -cd 'a-f0-9' | head -c 16`"
+
+(docker run --cidfile $watchfile ${@:4} &)
+
+cnt=0
+while [ ! -f $watchfile ] ; do
+  sleep .5
+  ((cnt++))
+  if [ $cnt -eq 30 ] ; then
+    echo "ERROR: waited 15 seconds without seeing $watchfile"
+    exit 1
+  fi
+done
+
+cid=`cat $watchfile`
+
+pid=`docker inspect --format '{{ .State.Pid }}' $cid`
+if [ $? -ne 0 ] ; then
+  echo "ERROR: unable to get container's PID. Does it run OK?"
+  exit 1
+fi
+
+(./membwcg -period $1 -quota $2 -cid docker/${cid}) &
+pid_m=$!
+
+ps -p "$pid_m" > /dev/null
+if [ $? -ne 0 ] ; then
+  sleep 1
+  echo "ERROR: membwcg failed, aborting."
+  docker stop $cid
+  exit 1
+fi
+
+# wait for container to finish
+cnt=0
+while ps -p $pid > /dev/null ; do
+sleep 10
+if [ $3 -gt 0 ] ; then
+  # only timeout if > 0
+  ((cnt++))
+  if [ $cnt -gt $(($3/10)) ] ; then
+    # we're timing out
+    echo "ERROR: waited $3 seconds. Stopping container"
+    docker stop $cid
+    kill -9 $pid_m
+    exit 1
+  fi
+fi
+done
+
+# check if membwcg is still running, if it is, then just kill it
+ps -p "$pid_m" > /dev/null
+if [ $? -eq 0 ] ; then
+  kill -9 $pid_m
+fi
