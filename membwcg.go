@@ -68,11 +68,13 @@ func updateStatsAndLimit(line string) {
 
 	cols := strings.Split(line, ",")
 	if len(cols) < 3 {
+		logBuf.WriteString("invalid row\n")
 		return
 	}
 	i, err := strconv.Atoi(cols[1])
 	if err != nil {
 		if strings.Contains(cols[1], "<") {
+			logBuf.WriteString("not a number row\n")
 			return
 		}
 		log.Fatalln(err)
