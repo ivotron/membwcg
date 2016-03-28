@@ -28,7 +28,7 @@ if [ $? -ne 0 ] ; then
   exit 1
 fi
 
-(./membwcg -period $1 -quota $2 -cid docker/${cid}) &
+(membwcg -period $1 -quota $2 -cid docker/${cid}) &
 pid_m=$!
 
 ps -p "$pid_m" > /dev/null

@@ -24,7 +24,7 @@ var samplingPeriod = flag.Int("sampling-period",
 var cid = flag.String("cid",
 	"000", "container id to control")
 var ops = flag.String("ops",
-	"LLC-prefetches,cache-misses", "value for perf's -e")
+	"LLC-prefetch-misses", "value for perf's -e")
 var verbose = flag.Bool("verbose", false, "whether to print perf output")
 
 // internal variables
@@ -116,8 +116,10 @@ func preparePerfCounter() (cmd *exec.Cmd) {
 	linesPerPeriod = int(*schedulingPeriod / *samplingPeriod) * numOps
 
 	// for every sample, there are as many lines as number of operations being
-	// counted. So every sample is N lines in the output of perf, where N is the
-	// number of ops.
+	// counted. In other words, every sample is N lines in the output of perf,
+	// where N is the number of ops. Thus, there are `numOps` lines times the
+	// number of samples per period, which is the schedulingPeriod divided by the
+	// samplingPeriod
 
 	cmd = exec.Command("perf", "stat",
 		"-a",
