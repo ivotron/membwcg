@@ -45,6 +45,7 @@ func updateStatsAndLimit(line string) {
 
 	if *verbose && logCnt == 50 {
 		fmt.Println(logBuf.String())
+		logBuf.Reset()
 		logCnt = 0
 	}
 	if currentIteration == linesPerPeriod {
@@ -66,7 +67,7 @@ func updateStatsAndLimit(line string) {
 	}
 
 	cols := strings.Split(line, ",")
-	if len(cols) != 5 {
+	if len(cols) < 3 {
 		return
 	}
 	i, err := strconv.Atoi(cols[1])
