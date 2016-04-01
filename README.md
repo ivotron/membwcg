@@ -20,15 +20,15 @@ The `docker-run` script wraps `docker run` and adds three mandatory
 positional arguments. Option `period` is given in milliseconds (in 
 multiples of 100), `quota` in the number of memory operations per 
 period and `timeout` in seconds (0 to disable it). Memory usage is 
-accounted by tracking the number of `LLC-prefetches` and 
-`cache-misses` events registered for the container. For example
+accounted by tracking the number of `LLC-prefetch-misses` and 
+events registered for the container. For example
 
 ```bash
 docker-run 1000 500 $timeout --rm alpine dd if=/dev/zero of=/dev/null
 ```
 
 The above specifies that the corresponding container should only use 
-500 memory-related operations ever 1s. If it goes aboves this 
+500 memory-related operations every 1s. If it goes aboves this 
 threshold, the group is frozen and it's not thawed until the next 
 period.
 
